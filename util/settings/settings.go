@@ -503,6 +503,8 @@ const (
 	externalServerTLSSecretName = "argocd-server-tls"
 	// partOfArgoCDSelector holds label selector that should be applied to config maps and secrets used to manage Argo CD
 	partOfArgoCDSelector = "app.kubernetes.io/part-of=argocd"
+	// secretsPartOfArgoCDSelectorCheckEnabledForSecretsKey is the key to configure secrets label selector check
+	secretsPartOfArgoCDSelectorCheckEnabledForSecretsKey = "secrets.partOfSelectorCheckEnabled"
 	// settingsPasswordPatternKey is the key to configure user password regular expression
 	settingsPasswordPatternKey = "passwordPattern"
 	// inClusterEnabledKey is the key to configure whether to allow in-cluster server address
@@ -1315,6 +1317,19 @@ func (mgr *SettingsManager) GetHelp() (*Help, error) {
 	}, nil
 }
 
+func (mgr *SettingsManager) partOfArgoCDSelectorArgoCDSelectorCheckEnabled() (bool, error) {
+	argoCDCM, err := mgr.getConfigMap()
+	if err != nil {
+		return false, err
+	}
+
+	if argoCDCM.Data[secretsPartOfArgoCDSelectorCheckEnabledForSecretsKey] == "" {
+		return true, nil
+	}
+
+	return strconv.ParseBool(argoCDCM.Data[secretsPartOfArgoCDSelectorCheckEnabledForSecretsKey])
+}
+
 // GetSettings retrieves settings from the ArgoCDConfigMap and secret.
 func (mgr *SettingsManager) GetSettings() (*ArgoCDSettings, error) {
 	err := mgr.ensureSynced(false)
@@ -1329,9 +1344,16 @@ func (mgr *SettingsManager) GetSettings() (*ArgoCDSettings, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error retrieving argocd-secret: %w", err)
 	}
-	selector, err := labels.Parse(partOfArgoCDSelector)
+	selector := labels.Everything()
+	partOfArgoCDSelectorCheckEnabled, err := mgr.partOfArgoCDSelectorArgoCDSelectorCheckEnabled()
 	if err != nil {
-		return nil, fmt.Errorf("error parsing Argo CD selector %w", err)
+		return nil, err
+	}
+	if partOfArgoCDSelectorCheckEnabled {
+		selector, err = labels.Parse(partOfArgoCDSelector)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing Argo CD selector %w", err)
+		}
 	}
 	secrets, err := mgr.secrets.Secrets(mgr.namespace).List(selector)
 	if err != nil {
