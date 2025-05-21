@@ -2,7 +2,7 @@ import {Autocomplete, ErrorNotification, MockupList, NotificationType, SlidingPa
 import * as classNames from 'classnames';
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
-import {Key, KeybindingContext, KeybindingProvider} from 'argo-ui/v2';
+import {useData, Key, KeybindingContext, KeybindingProvider} from 'argo-ui/v2';
 import {RouteComponentProps} from 'react-router';
 import {combineLatest, from, merge, Observable} from 'rxjs';
 import {bufferTime, delay, filter, map, mergeMap, repeat, retryWhen} from 'rxjs/operators';
@@ -369,6 +369,8 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
 
     return (
         <ClusterCtx.Provider value={clusters}>
+          <DataLoader load={() => services.projects.list('items.metadata.name').then(projs => projs.map(item => item.metadata.name))}>
+          {(projects) => (
             <KeybindingProvider>
                 <Consumer>
                     {ctx => (
@@ -383,16 +385,63 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                                     <DataLoader
                                         input={pref.projectsFilter?.join(',')}
                                         ref={loaderRef}
-                                        load={() => AppUtils.handlePageVisibility(() => loadApplications(pref.projectsFilter, query.get('appNamespace')))}
+                                        load={() => {
+                                            // The assumption here is that if this is a new argocd instance with only
+                                            // default project - then there is only one project
+                                            // and so it preserves original behavior (welcome screen and create button).
+                                            // But, if this is an instance with more than one project,
+                                            // the user likely didn't actually want to view ALL apps from ALL projects
+                                            // anyway as it would have been a painful experience.
+                                            // User likely just navigated to the landing page, or clicked to remove
+                                            // all filters with the intention to change them.
+                                            // In which case, pre-selecting bogus project helps, no results are returned,
+                                            // and the user do not have to wait for 40 seconds for 70k apps to load
+                                            // only to finally be able to change filters to something else anyway.
+                                            // This behavior does, in fact, mean that there is no way in UI
+                                            // to ACTUALLY remove ALL filters nicely. It could be.
+                                            // But right now this entire view is so entangled that it would be too much work.
+                                            // For some reason control elements rendering is depending on the app list to load....
+                                            // So unless loadApplications returns something - nothing else will load.
+                                            // For now, the user can still click a hack-ish link under the warning
+                                            // message which adds forceLoadAllApps=true parameter
+                                            // in a rare case that viewing 70k apps was actually intended.
+                                            // There will be no UI element to remove the parameter at the moment.
+                                            const filtersEnabled =
+                                                pref.labelsFilter?.length > 0 ||
+                                                pref.clustersFilter?.length > 0 ||
+                                                pref.projectsFilter?.length > 0 ||
+                                                pref.namespacesFilter?.length > 0;
+                                            const forceLoadAllApps = query.get('forceLoadAllApps') === 'true';
+                                            const guessMultiProject = projects?.length > 1;
+                                            if (!filtersEnabled && !forceLoadAllApps && guessMultiProject) {
+                                                pref.projectsFilter = ['<placeholder>'];
+                                            }
+
+                                            return AppUtils.handlePageVisibility(() => loadApplications(pref.projectsFilter, query.get('appNamespace')));
+                                        }}
                                         loadingRenderer={() => (
                                             <div className='argo-container'>
                                                 <MockupList height={100} marginTop={30} />
                                             </div>
                                         )}>
                                         {(applications: models.Application[]) => {
-                                            const healthBarPrefs = pref.statusBarView || ({} as HealthStatusBarPreferences);
-                                            const {filteredApps, filterResults} = filterApps(applications, pref, pref.search);
-                                            const handleCreatePanelClose = async () => {
+                                                const filtersEnabled =
+                                                    pref.labelsFilter?.length > 0 ||
+                                                    pref.clustersFilter?.length > 0 ||
+                                                    pref.projectsFilter?.length > 0 ||
+                                                    pref.namespacesFilter?.length > 0;
+                                                const placeholderMode =
+                                                    pref.projectsFilter?.length === 1 &&
+                                                    pref.projectsFilter[0] === '<placeholder>';
+                                                const forceLoadAllApps = query.get('forceLoadAllApps') === 'true';
+                                                const guessMultiProject = projects?.length > 1;
+                                                if (!filtersEnabled && !forceLoadAllApps && guessMultiProject) {
+                                                    ctx.navigation.goto('.', {proj: '<placeholder>'}, {replace: true});
+                                                }
+
+                                                const healthBarPrefs = pref.statusBarView || ({} as HealthStatusBarPreferences);
+                                                const {filteredApps, filterResults} = filterApps(applications, pref, pref.search);
+                                                const handleCreatePanelClose = async () => {
                                                 const outsideDiv = document.querySelector('.sliding-panel__outside');
                                                 const closeButton = document.querySelector('.sliding-panel__close');
 
@@ -485,7 +534,7 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                                                         }}
                                                     />
                                                     <div className='applications-list'>
-                                                        {applications.length === 0 && pref.projectsFilter?.length === 0 && (pref.labelsFilter || []).length === 0 ? (
+                                                        {applications.length === 0 && !filtersEnabled ? (
                                                             <EmptyState icon='argo-icon-application'>
                                                                 <h4>No applications available to you just yet</h4>
                                                                 <h5>Create new application to start managing resources in your cluster</h5>
@@ -520,17 +569,34 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                                                                         page={pref.page}
                                                                         emptyState={() => (
                                                                             <EmptyState icon='fa fa-search'>
-                                                                                <h4>No matching applications found</h4>
-                                                                                <h5>
-                                                                                    Change filter criteria or&nbsp;
-                                                                                    <a
-                                                                                        onClick={() => {
-                                                                                            AppsListPreferences.clearFilters(pref);
-                                                                                            onFilterPrefChanged(ctx, pref);
-                                                                                        }}>
-                                                                                        clear filters
-                                                                                    </a>
-                                                                                </h5>
+                                                                                {placeholderMode ? (
+                                                                                  <div>
+                                                                                    <h4>Please select at least one filter (project, namespace, label, or cluster) to view applications</h4>
+                                                                                    <h5>
+                                                                                        Change filter criteria or&nbsp;
+                                                                                        <a
+                                                                                            onClick={() => {
+                                                                                                ctx.navigation.goto('.', {forceLoadAllApps: true, proj: ''}, {replace: true})
+                                                                                            }}>
+                                                                                            try to load all apps from all projects (slow)
+                                                                                        </a>
+                                                                                    </h5>
+                                                                                  </div>
+                                                                                ) : (
+                                                                                  <div>
+                                                                                    <h4>No matching applications found</h4>
+                                                                                    <h5>
+                                                                                        Change filter criteria or&nbsp;
+                                                                                        <a
+                                                                                            onClick={() => {
+                                                                                                AppsListPreferences.clearFilters(pref);
+                                                                                                onFilterPrefChanged(ctx, pref);
+                                                                                            }}>
+                                                                                            clear filters
+                                                                                        </a>
+                                                                                    </h5>
+                                                                                  </div>
+                                                                                )}
                                                                             </EmptyState>
                                                                         )}
                                                                         sortOptions={[
@@ -667,6 +733,8 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                     )}
                 </Consumer>
             </KeybindingProvider>
+          )}
+          </DataLoader>
         </ClusterCtx.Provider>
     );
 };
