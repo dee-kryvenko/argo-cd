@@ -2,6 +2,8 @@ import {Account} from '../models';
 import requests from './requests';
 
 export class AccountsService {
+    private canICache: Map<string, Promise<boolean>> = new Map();
+
     public list(): Promise<Account[]> {
         return requests.get('/account').then(res => (res.body.items || []) as Account[]);
     }
@@ -29,6 +31,28 @@ export class AccountsService {
     }
 
     public canI(resource: string, action: string, subresource: string): Promise<boolean> {
-        return requests.get(`/account/can-i/${resource}/${action}/${subresource}`).then(res => res.body.value === 'yes');
+        const cacheKey = `${resource}/${action}/${subresource}`;
+        
+        // Check if we already have a cached promise for this permission check
+        if (this.canICache.has(cacheKey)) {
+            return this.canICache.get(cacheKey)!;
+        }
+        
+        // Create a new promise and cache it
+        const promise = requests
+            .get(`/account/can-i/${resource}/${action}/${subresource}`)
+            .then(res => res.body.value === 'yes')
+            .catch(err => {
+                // Remove from cache on error so it can be retried
+                this.canICache.delete(cacheKey);
+                throw err;
+            });
+        
+        this.canICache.set(cacheKey, promise);
+        return promise;
+    }
+
+    public clearCanICache(): void {
+        this.canICache.clear();
     }
 }
