@@ -97,39 +97,55 @@ const getOptions = (apps: FilteredApp[], filterType: keyof FilterResult, filter:
     });
 };
 
-const SyncFilter = (props: AppFilterProps) => (
-    <Filter
-        label='SYNC STATUS'
-        selected={props.pref.syncFilter}
-        setSelected={s => props.onChange({...props.pref, syncFilter: s})}
-        options={getOptions(
-            props.apps,
-            'sync',
-            app => app.status.sync.status,
-            Object.keys(SyncStatuses),
-            s => (
-                <ComparisonStatusIcon status={s as SyncStatusCode} noSpin={true} />
-            )
-        )}
-    />
-);
+const SyncFilter = (props: AppFilterProps) => {
+    // Show all sync statuses even when no apps are loaded
+    const options = props.apps.length > 0
+        ? getOptions(
+              props.apps,
+              'sync',
+              app => app.status.sync.status,
+              Object.keys(SyncStatuses),
+              s => <ComparisonStatusIcon status={s as SyncStatusCode} noSpin={true} />
+          )
+        : Object.keys(SyncStatuses).map(s => ({
+              label: s,
+              icon: <ComparisonStatusIcon status={s as SyncStatusCode} noSpin={true} />
+          }));
 
-const HealthFilter = (props: AppFilterProps) => (
-    <Filter
-        label='HEALTH STATUS'
-        selected={props.pref.healthFilter}
-        setSelected={s => props.onChange({...props.pref, healthFilter: s})}
-        options={getOptions(
-            props.apps,
-            'health',
-            app => app.status.health.status,
-            Object.keys(HealthStatuses),
-            s => (
-                <HealthStatusIcon state={{status: s as HealthStatusCode, message: ''}} noSpin={true} />
-            )
-        )}
-    />
-);
+    return (
+        <Filter
+            label='SYNC STATUS'
+            selected={props.pref.syncFilter}
+            setSelected={s => props.onChange({...props.pref, syncFilter: s})}
+            options={options}
+        />
+    );
+};
+
+const HealthFilter = (props: AppFilterProps) => {
+    // Show all health statuses even when no apps are loaded
+    const options = props.apps.length > 0
+        ? getOptions(
+              props.apps,
+              'health',
+              app => app.status.health.status,
+              Object.keys(HealthStatuses),
+              s => <HealthStatusIcon state={{status: s as HealthStatusCode, message: ''}} noSpin={true} />
+          )
+        : Object.keys(HealthStatuses).map(s => ({
+              label: s,
+              icon: <HealthStatusIcon state={{status: s as HealthStatusCode, message: ''}} noSpin={true} />
+          }));
+
+    return (
+        <Filter
+            label='HEALTH STATUS'
+            selected={props.pref.healthFilter}
+            setSelected={s => props.onChange({...props.pref, healthFilter: s})}
+            options={options}
+        />
+    );
+};
 
 const LabelsFilter = (props: AppFilterProps) => {
     const labels = new Map<string, Set<string>>();
@@ -181,17 +197,11 @@ const ProjectFilter = (props: AppFilterProps) => {
 };
 
 const ClusterFilter = (props: AppFilterProps) => {
-    const getClusterDetail = (dest: ApplicationDestination, clusterList: Cluster[]): string => {
-        const cluster = (clusterList || []).find(target => target.name === dest.name || target.server === dest.server);
-        if (!cluster) {
-            return dest.server || dest.name;
-        }
-        return formatClusterQueryParam(cluster);
-    };
-
     const [clusters, loading, error] = useData(() => services.clusters.list());
+    
+    // Show ALL clusters from API, not filtered by loaded apps
     const clusterOptions = optionsFrom(
-        Array.from(new Set(props.apps.map(app => getClusterDetail(app.spec.destination, clusters)).filter(item => !!item))),
+        (clusters || []).map(cluster => formatClusterQueryParam(cluster)),
         props.pref.clustersFilter
     );
 
@@ -249,6 +259,20 @@ const FavoriteFilter = (props: AppFilterProps) => {
 };
 
 function getAutoSyncOptions(apps: FilteredApp[]) {
+    // Show auto-sync options even when no apps are loaded
+    if (apps.length === 0) {
+        return [
+            {
+                label: 'Enabled',
+                icon: <i className='fa fa-circle-play' />
+            },
+            {
+                label: 'Disabled',
+                icon: <i className='fa fa-ban' />
+            }
+        ];
+    }
+
     const counts = getCounts(apps, 'autosync', app => getAutoSyncStatus(app.spec.syncPolicy), ['Enabled', 'Disabled']);
     return [
         {

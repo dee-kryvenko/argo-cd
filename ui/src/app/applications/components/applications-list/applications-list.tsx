@@ -95,70 +95,70 @@ function loadApplications(projects: string[], appNamespace: string): Observable<
 const ViewPref = ({children}: {children: (pref: AppsListPreferences & {page: number; search: string}) => React.ReactNode}) => (
     <ObservableQuery>
         {q => (
-            <DataLoader
-                load={() =>
+        <DataLoader
+            load={() =>
                     combineLatest([services.viewPreferences.getPreferences().pipe(map(item => item.appList)), q]).pipe(
-                        map(items => {
-                            const params = items[1];
-                            const viewPref: AppsListPreferences = {...items[0]};
-                            if (params.get('proj') != null) {
-                                viewPref.projectsFilter = params
-                                    .get('proj')
-                                    .split(',')
-                                    .filter(item => !!item);
-                            }
-                            if (params.get('sync') != null) {
-                                viewPref.syncFilter = params
-                                    .get('sync')
-                                    .split(',')
-                                    .filter(item => !!item);
-                            }
-                            if (params.get('autoSync') != null) {
-                                viewPref.autoSyncFilter = params
-                                    .get('autoSync')
-                                    .split(',')
-                                    .filter(item => !!item);
-                            }
-                            if (params.get('health') != null) {
-                                viewPref.healthFilter = params
-                                    .get('health')
-                                    .split(',')
-                                    .filter(item => !!item);
-                            }
-                            if (params.get('namespace') != null) {
-                                viewPref.namespacesFilter = params
-                                    .get('namespace')
-                                    .split(',')
-                                    .filter(item => !!item);
-                            }
-                            if (params.get('cluster') != null) {
-                                viewPref.clustersFilter = params
-                                    .get('cluster')
-                                    .split(',')
-                                    .filter(item => !!item);
-                            }
-                            if (params.get('showFavorites') != null) {
-                                viewPref.showFavorites = params.get('showFavorites') === 'true';
-                            }
-                            if (params.get('view') != null) {
-                                viewPref.view = params.get('view') as AppsListViewType;
-                            }
-                            if (params.get('labels') != null) {
-                                viewPref.labelsFilter = params
-                                    .get('labels')
-                                    .split(',')
-                                    .map(decodeURIComponent)
-                                    .filter(item => !!item);
-                            }
-                            return {...viewPref, page: parseInt(params.get('page') || '0', 10), search: params.get('search') || ''};
-                        })
-                    )
-                }>
-                {pref => children(pref)}
-            </DataLoader>
+                    map(items => {
+                        const params = items[1];
+                        const viewPref: AppsListPreferences = {...items[0]};
+                        if (params.get('proj') != null) {
+                            viewPref.projectsFilter = params
+                                .get('proj')
+                                .split(',')
+                                .filter(item => !!item);
+                        }
+                        if (params.get('sync') != null) {
+                            viewPref.syncFilter = params
+                                .get('sync')
+                                .split(',')
+                                .filter(item => !!item);
+                        }
+                        if (params.get('autoSync') != null) {
+                            viewPref.autoSyncFilter = params
+                                .get('autoSync')
+                                .split(',')
+                                .filter(item => !!item);
+                        }
+                        if (params.get('health') != null) {
+                            viewPref.healthFilter = params
+                                .get('health')
+                                .split(',')
+                                .filter(item => !!item);
+                        }
+                        if (params.get('namespace') != null) {
+                            viewPref.namespacesFilter = params
+                                .get('namespace')
+                                .split(',')
+                                .filter(item => !!item);
+                        }
+                        if (params.get('cluster') != null) {
+                            viewPref.clustersFilter = params
+                                .get('cluster')
+                                .split(',')
+                                .filter(item => !!item);
+                        }
+                        if (params.get('showFavorites') != null) {
+                            viewPref.showFavorites = params.get('showFavorites') === 'true';
+                        }
+                        if (params.get('view') != null) {
+                            viewPref.view = params.get('view') as AppsListViewType;
+                        }
+                        if (params.get('labels') != null) {
+                            viewPref.labelsFilter = params
+                                .get('labels')
+                                .split(',')
+                                .map(decodeURIComponent)
+                                .filter(item => !!item);
+                        }
+                        return {...viewPref, page: parseInt(params.get('page') || '0', 10), search: params.get('search') || ''};
+                    })
+                )
+            }>
+            {pref => children(pref)}
+        </DataLoader>
         )}
     </ObservableQuery>
-);
+    );
 
 function filterApps(applications: models.Application[], pref: AppsListPreferences, search: string): {filteredApps: models.Application[]; filterResults: FilteredApp[]} {
     applications = applications.map(app => {
@@ -311,6 +311,15 @@ const FlexTopBar = (props: {toolbar: Toolbar | Observable<Toolbar>}) => {
     );
 };
 
+// Helper function to check if any meaningful filter is applied
+function hasActiveFilters(pref: AppsListPreferences, search: string): boolean {
+    return (
+        AppsListPreferences.countEnabledFilters(pref) > 0 ||
+        pref.showFavorites ||
+        search?.length > 0
+    );
+}
+
 export const ApplicationsList = (props: RouteComponentProps<{}>) => {
     const query = new URLSearchParams(props.location.search);
     const appInput = tryJsonParse(query.get('new'));
@@ -319,6 +328,7 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
     const [createApi, setCreateApi] = React.useState(null);
     const clusters = React.useMemo(() => services.clusters.list(), []);
     const [isAppCreatePending, setAppCreatePending] = React.useState(false);
+    const [explicitLoadAll, setExplicitLoadAll] = React.useState(false);
     const loaderRef = React.useRef<DataLoader>();
     const {List, Summary, Tiles} = AppsListViewKey;
 
@@ -367,6 +377,14 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
 
     const sidebarTarget = useSidebarTarget();
 
+    // Reset explicitLoadAll when filters are applied
+    React.useEffect(() => {
+        const hasUrlFilters = ['proj', 'sync', 'autoSync', 'health', 'namespace', 'cluster', 'labels', 'search'].some(param => query.get(param));
+        if (hasUrlFilters) {
+            setExplicitLoadAll(false);
+        }
+    }, [props.location.search]);
+
     return (
         <ClusterCtx.Provider value={clusters}>
             <KeybindingProvider>
@@ -381,9 +399,29 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                                     toolbar={{breadcrumbs: [{title: 'Applications', path: '/applications'}]}}
                                     hideAuth={true}>
                                     <DataLoader
-                                        input={pref.projectsFilter?.join(',')}
+                                        input={[
+                                            pref.projectsFilter?.join(','),
+                                            pref.clustersFilter?.join(','),
+                                            pref.namespacesFilter?.join(','),
+                                            pref.labelsFilter?.join(','),
+                                            pref.syncFilter?.join(','),
+                                            pref.autoSyncFilter?.join(','),
+                                            pref.healthFilter?.join(','),
+                                            pref.reposFilter?.join(','),
+                                            // Note: pref.search is intentionally NOT included here
+                                            // Search filters client-side on already loaded apps, not server-side
+                                            pref.showFavorites ? 'fav' : '',
+                                            explicitLoadAll ? 'all' : ''
+                                        ].join('|')}
                                         ref={loaderRef}
-                                        load={() => AppUtils.handlePageVisibility(() => loadApplications(pref.projectsFilter, query.get('appNamespace')))}
+                                        load={() => {
+                                            // Only load applications if filters are applied or user explicitly requested to load all
+                                            if (hasActiveFilters(pref, pref.search) || explicitLoadAll) {
+                                                return AppUtils.handlePageVisibility(() => loadApplications(pref.projectsFilter, query.get('appNamespace')));
+                                            }
+                                            // Return empty array if no filters applied and no explicit load requested
+                                            return from([[]]);
+                                        }}
                                         loadingRenderer={() => (
                                             <div className='argo-container'>
                                                 <MockupList height={100} marginTop={30} />
@@ -392,6 +430,7 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                                         {(applications: models.Application[]) => {
                                             const healthBarPrefs = pref.statusBarView || ({} as HealthStatusBarPreferences);
                                             const {filteredApps, filterResults} = filterApps(applications, pref, pref.search);
+                                            const shouldLoadApplications = hasActiveFilters(pref, pref.search) || explicitLoadAll;
                                             const handleCreatePanelClose = async () => {
                                                 const outsideDiv = document.querySelector('.sliding-panel__outside');
                                                 const closeButton = document.querySelector('.sliding-panel__close');
@@ -485,7 +524,41 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                                                         }}
                                                     />
                                                     <div className='applications-list'>
-                                                        {applications.length === 0 && pref.projectsFilter?.length === 0 && (pref.labelsFilter || []).length === 0 ? (
+                                                        {/* Always render the filters sidebar */}
+                                                        {ReactDOM.createPortal(
+                                                            <DataLoader load={() => services.viewPreferences.getPreferences()}>
+                                                                {allpref => (
+                                                                    <ApplicationsFilter
+                                                                        apps={filterResults}
+                                                                        onChange={newPrefs => onFilterPrefChanged(ctx, newPrefs)}
+                                                                        pref={pref}
+                                                                        collapsed={allpref.hideSidebar}
+                                                                    />
+                                                                )}
+                                                            </DataLoader>,
+                                                            sidebarTarget?.current
+                                                        )}
+
+                                                        {/* Show appropriate empty state based on filter status */}
+                                                        {!shouldLoadApplications && applications.length === 0 ? (
+                                                            <EmptyState icon='fa fa-filter'>
+                                                                <h4>No filters applied</h4>
+                                                                <h5>To improve performance on large installations, please apply at least one filter from the sidebar or explicitly load all applications</h5>
+                                                                <button
+                                                                    qe-id='applications-list-button-load-all'
+                                                                    className='argo-button argo-button--base'
+                                                                    onClick={() => {
+                                                                        setExplicitLoadAll(true);
+                                                                        if (loaderRef.current) {
+                                                                            loaderRef.current.reload();
+                                                                        }
+                                                                    }}
+                                                                    style={{marginTop: '10px'}}>
+                                                                    <i className='fa fa-download' style={{marginRight: '5px'}} />
+                                                                    Load All Applications
+                                                                </button>
+                                                            </EmptyState>
+                                                        ) : applications.length === 0 && shouldLoadApplications && pref.projectsFilter?.length === 0 && (pref.labelsFilter || []).length === 0 ? (
                                                             <EmptyState icon='argo-icon-application'>
                                                                 <h4>No applications available to you just yet</h4>
                                                                 <h5>Create new application to start managing resources in your cluster</h5>
@@ -498,19 +571,6 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                                                             </EmptyState>
                                                         ) : (
                                                             <>
-                                                                {ReactDOM.createPortal(
-                                                                    <DataLoader load={() => services.viewPreferences.getPreferences()}>
-                                                                        {allpref => (
-                                                                            <ApplicationsFilter
-                                                                                apps={filterResults}
-                                                                                onChange={newPrefs => onFilterPrefChanged(ctx, newPrefs)}
-                                                                                pref={pref}
-                                                                                collapsed={allpref.hideSidebar}
-                                                                            />
-                                                                        )}
-                                                                    </DataLoader>,
-                                                                    sidebarTarget?.current
-                                                                )}
 
                                                                 {(pref.view === 'summary' && <ApplicationsSummary applications={filteredApps} />) || (
                                                                     <Paginate
@@ -591,25 +651,25 @@ export const ApplicationsList = (props: RouteComponentProps<{}>) => {
                                                     </div>
                                                     <ObservableQuery>
                                                         {q => (
-                                                            <DataLoader
-                                                                load={() =>
+                                                    <DataLoader
+                                                        load={() =>
                                                                     q.pipe(
-                                                                        mergeMap(params => {
-                                                                            const syncApp = params.get('syncApp');
-                                                                            const appNamespace = params.get('appNamespace');
-                                                                            return (syncApp && from(services.applications.get(syncApp, appNamespace))) || from([null]);
-                                                                        })
-                                                                    )
-                                                                }>
-                                                                {app => (
-                                                                    <ApplicationSyncPanel
-                                                                        key='syncPanel'
-                                                                        application={app}
-                                                                        selectedResource={'all'}
-                                                                        hide={() => ctx.navigation.goto('.', {syncApp: null}, {replace: true})}
-                                                                    />
-                                                                )}
-                                                            </DataLoader>
+                                                                mergeMap(params => {
+                                                                    const syncApp = params.get('syncApp');
+                                                                    const appNamespace = params.get('appNamespace');
+                                                                    return (syncApp && from(services.applications.get(syncApp, appNamespace))) || from([null]);
+                                                                })
+                                                            )
+                                                        }>
+                                                        {app => (
+                                                            <ApplicationSyncPanel
+                                                                key='syncPanel'
+                                                                application={app}
+                                                                selectedResource={'all'}
+                                                                hide={() => ctx.navigation.goto('.', {syncApp: null}, {replace: true})}
+                                                            />
+                                                        )}
+                                                    </DataLoader>
                                                         )}
                                                     </ObservableQuery>
                                                     <SlidingPanel
