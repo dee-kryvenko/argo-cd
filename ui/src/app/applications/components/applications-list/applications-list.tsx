@@ -381,6 +381,15 @@ const FlexTopBar = (props: {toolbar: Toolbar | Observable<Toolbar>}) => {
     );
 };
 
+// Helper function to check if any meaningful filter is applied
+function hasActiveFilters(pref: AppsListPreferences, search: string): boolean {
+    return (
+        AppsListPreferences.countEnabledFilters(pref) > 0 ||
+        pref.showFavorites ||
+        search?.length > 0
+    );
+}
+
 export const ApplicationsList = () => {
     const query = useQuery();
     const observableQuery$ = useObservableQuery();
@@ -390,6 +399,7 @@ export const ApplicationsList = () => {
     const [createApi, setCreateApi] = React.useState(null);
     const clusters = React.useMemo(() => services.clusters.list(), []);
     const [isAppCreatePending, setAppCreatePending] = React.useState(false);
+    const [explicitLoadAll, setExplicitLoadAll] = React.useState(false);
     const loaderRef = React.useRef<DataLoader>();
     const {List, Summary, Tiles} = AppsListViewKey;
 
@@ -438,13 +448,37 @@ export const ApplicationsList = () => {
 
     const sidebarTarget = useSidebarTarget();
 
+    // Reset explicitLoadAll when filters are applied
+    React.useEffect(() => {
+        const hasUrlFilters = ['proj', 'sync', 'autoSync', 'health', 'namespace', 'cluster', 'labels', 'search'].some(param => query.get(param));
+        if (hasUrlFilters) {
+            setExplicitLoadAll(false);
+        }
+    }, [query.toString()]);
+
     return (
         <ClusterCtx.Provider value={clusters}>
             <KeybindingProvider>
                 <Consumer>
                     {ctx => (
                         <ViewPref>
-                            {pref => (
+                            {pref => {
+                                // Create a comprehensive input key that changes when any filter changes
+                                const filterInput = [
+                                    pref.projectsFilter?.join(','),
+                                    pref.clustersFilter?.join(','),
+                                    pref.namespacesFilter?.join(','),
+                                    pref.labelsFilter?.join(','),
+                                    pref.syncFilter?.join(','),
+                                    pref.autoSyncFilter?.join(','),
+                                    pref.healthFilter?.join(','),
+                                    pref.reposFilter?.join(','),
+                                    pref.search,
+                                    pref.showFavorites ? 'fav' : '',
+                                    explicitLoadAll ? 'all' : ''
+                                ].join('|');
+
+                                return (
                                 <Page
                                     key={pref.view}
                                     title={getPageTitle(pref.view)}
@@ -452,15 +486,46 @@ export const ApplicationsList = () => {
                                     toolbar={{breadcrumbs: [{title: 'Applications', path: '/applications'}]}}
                                     hideAuth={true}>
                                     <DataLoader
-                                        input={pref.projectsFilter?.join(',')}
+                                        input={filterInput}
                                         ref={loaderRef}
-                                        load={() => AppUtils.handlePageVisibility(() => loadApplications(pref.projectsFilter, query.get('appNamespace')))}
+                                        load={() => {
+                                            // Only load applications if filters are applied or user explicitly requested to load all
+                                            if (hasActiveFilters(pref, pref.search) || explicitLoadAll) {
+                                                return AppUtils.handlePageVisibility(() => loadApplications(pref.projectsFilter, query.get('appNamespace')));
+                                            }
+                                            // Return empty array if no filters applied and no explicit load requested
+                                            return from([[]]);
+                                        }}
                                         loadingRenderer={() => (
                                             <div className='argo-container'>
                                                 <MockupList height={100} marginTop={30} />
                                             </div>
                                         )}>
                                         {(applications: models.Application[]) => {
+                                            // Show initial empty state if no filters and no explicit load
+                                            const shouldLoadApplications = hasActiveFilters(pref, pref.search) || explicitLoadAll;
+                                            if (!shouldLoadApplications && applications.length === 0) {
+                                                return (
+                                                    <EmptyState icon='fa fa-filter'>
+                                                        <h4>No filters applied</h4>
+                                                        <h5>To improve performance on large installations, please apply at least one filter or explicitly load all applications</h5>
+                                                        <button
+                                                            qe-id='applications-list-button-load-all'
+                                                            className='argo-button argo-button--base'
+                                                            onClick={() => {
+                                                                setExplicitLoadAll(true);
+                                                                // Trigger reload by updating the loader
+                                                                if (loaderRef.current) {
+                                                                    loaderRef.current.reload();
+                                                                }
+                                                            }}
+                                                            style={{marginTop: '10px'}}>
+                                                            <i className='fa fa-download' style={{marginRight: '5px'}} />
+                                                            Load All Applications
+                                                        </button>
+                                                    </EmptyState>
+                                                );
+                                            }
                                             const healthBarPrefs = pref.statusBarView || ({} as HealthStatusBarPreferences);
                                             const {filteredApps, filterResults} = filterApps(applications, pref, pref.search);
                                             const handleCreatePanelClose = async () => {
@@ -681,7 +746,8 @@ export const ApplicationsList = () => {
                                         }}
                                     </DataLoader>
                                 </Page>
-                            )}
+                                );
+                            }}
                         </ViewPref>
                     )}
                 </Consumer>
